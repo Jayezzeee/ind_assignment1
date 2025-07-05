@@ -1,3 +1,5 @@
+
+// main.dart is the entry point and main navigation/state logic for the Memory Diary app.
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -7,18 +9,22 @@ import 'screens/home_page.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
 
+
+/// App entry point. Initializes Firebase and runs the app.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   runApp(const AppRoot());
 }
 
+/// Root widget for the app, manages dark mode and launches splash/main app.
 class AppRoot extends StatefulWidget {
   const AppRoot({super.key});
   @override
   State<AppRoot> createState() => _AppRootState();
 }
 
+/// State for AppRoot, manages dark mode state.
 class _AppRootState extends State<AppRoot> {
   bool isDarkMode = false;
 
@@ -44,6 +50,7 @@ class _AppRootState extends State<AppRoot> {
 
 
 
+/// Passes dark mode and theme change callback to the authentication gate.
 class MemoryDiaryApp extends StatelessWidget {
   final bool isDarkMode;
   final ValueChanged<bool> onThemeChanged;
@@ -64,6 +71,7 @@ class MemoryDiaryApp extends StatelessWidget {
 
 
 
+/// Handles authentication, profile loading/saving, navigation, and state for the main app.
 class AuthGate extends StatefulWidget {
   final bool isDarkMode;
   final ValueChanged<bool> onThemeChanged;
@@ -77,6 +85,7 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
+/// State for AuthGate, manages navigation, profile state, and auth logic.
 class _AuthGateState extends State<AuthGate> {
   int _selectedIndex = 0;
   String? _profileName;
@@ -86,6 +95,7 @@ class _AuthGateState extends State<AuthGate> {
   bool _loadingProfile = false;
   bool _editingProfile = false;
 
+  /// Sends a verification email to the user (not used in current flow).
   Future<void> _sendVerificationEmail() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null && !user.emailVerified) {
@@ -93,6 +103,7 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
+  /// Reloads the current user from Firebase Auth.
   Future<void> _reloadUser() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) await user.reload();
@@ -105,6 +116,7 @@ class _AuthGateState extends State<AuthGate> {
     debugPrint('AuthGateState initState');
   }
 
+  /// Loads the user's profile from Firebase Realtime Database and updates state.
   Future<void> _loadProfile() async {
     final user = FirebaseAuth.instance.currentUser;
     debugPrint('_loadProfile called. user: \\${user?.uid}');
@@ -171,6 +183,7 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
+  /// Saves the user's profile to Firebase Realtime Database, updates state, and shows a SnackBar on success or error.
   Future<void> _saveProfile(String name, String desc, String age, String prefs) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -223,11 +236,13 @@ class _AuthGateState extends State<AuthGate> {
     debugPrint('_saveProfile: saved name=$name, desc=$desc, age=$age, prefs=$prefs, _selectedIndex=$_selectedIndex');
   }
 
+  /// Handles bottom navigation bar taps, prevents navigation to diary if profile is incomplete.
   void _onTabTapped(int idx) {
     if (idx == 1 && (_profileName == null || _profileName!.isEmpty)) return;
     setState(() => _selectedIndex = idx);
   }
 
+  /// Builds the main UI, including swipe navigation (PageView), bottom navigation, and app bar actions.
   @override
   Widget build(BuildContext context) {
     debugPrint('AuthGateState build: _profileName={_profileName}, _loadingProfile={_loadingProfile}, _selectedIndex={_selectedIndex}');
@@ -428,6 +443,7 @@ class _AuthGateState extends State<AuthGate> {
   }
 }
 
+/// Splash screen shown briefly on app launch.
 class SplashScreen extends StatefulWidget {
   final VoidCallback onFinish;
   final Widget child;
@@ -436,6 +452,7 @@ class SplashScreen extends StatefulWidget {
   State<SplashScreen> createState() => _SplashScreenState();
 }
 
+/// State for SplashScreen, manages splash duration and transition.
 class _SplashScreenState extends State<SplashScreen> {
   static const splashDuration = Duration(milliseconds: 700); // Shorter splash
   @override

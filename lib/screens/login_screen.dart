@@ -1,18 +1,26 @@
+
+// LoginScreen provides login, sign up, and password reset functionality for the app.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 
 
+/// The login screen for user authentication (login, sign up, password reset).
 class LoginScreen extends StatefulWidget {
+  /// Whether dark mode is enabled
   final bool isDarkMode;
+  /// Callback to toggle dark mode
   final ValueChanged<bool> onThemeChanged;
+  /// Creates a login screen.
   const LoginScreen({super.key, this.isDarkMode = false, required this.onThemeChanged});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
+/// State for LoginScreen, manages authentication logic and UI state.
 class _LoginScreenState extends State<LoginScreen> {
+  /// Handles password reset by sending a reset email.
   Future<void> _resetPassword() async {
     if (_emailController.text.trim().isEmpty) {
       if (mounted) setState(() { _error = 'Please enter your email to reset password.'; });
@@ -32,8 +40,10 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) setState(() { _isLoading = false; });
     }
   }
+  // Whether to show the sign up form instead of login
   bool _showSignUp = false;
 
+  /// Handles user sign up with email and password.
   Future<void> _signUp() async {
     if (mounted) setState(() { _isLoading = true; _error = null; });
     try {
@@ -48,11 +58,15 @@ class _LoginScreenState extends State<LoginScreen> {
       if (mounted) setState(() { _isLoading = false; });
     }
   }
+  // Controllers for email and password fields
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  // Error message to display
   String? _error;
+  // Whether an async operation is in progress
   bool _isLoading = false;
 
+  /// Handles user login with email and password.
   Future<void> _login() async {
     if (mounted) setState(() { _isLoading = true; _error = null; });
     try {
@@ -67,6 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  /// Builds the login screen UI.
   @override
   Widget build(BuildContext context) {
     final isDark = widget.isDarkMode;
@@ -74,6 +89,7 @@ class _LoginScreenState extends State<LoginScreen> {
       body: Container(
         width: double.infinity,
         height: double.infinity,
+        // Background gradient for a modern look
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -90,6 +106,7 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  // App heading
                   const SizedBox(height: 16),
                   Center(
                     child: Text(
@@ -104,6 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 32),
+                  // Login or Sign Up title
                   Text(
                     _showSignUp ? 'Sign Up' : 'Login',
                     style: TextStyle(
@@ -114,6 +132,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 32),
+                  // Email field
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -138,6 +157,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 18),
+                  // Password field
                   Container(
                     decoration: BoxDecoration(
                       color: Colors.white,
@@ -161,11 +181,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       obscureText: true,
                     ),
                   ),
+                  // Error message
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Text(_error!, style: const TextStyle(color: Colors.red)),
                   ],
                   const SizedBox(height: 18),
+                  // Forgot password link
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
@@ -177,6 +199,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
+                  // Login or Sign Up button
                   _isLoading
                       ? const CircularProgressIndicator()
                       : SizedBox(
@@ -199,6 +222,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                   const SizedBox(height: 18),
+                  // Divider and social login (UI only)
                   Row(
                     children: [
                       Expanded(child: Divider(color: Colors.grey[400])),
@@ -210,6 +234,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
+                  // Social login buttons (not implemented)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
@@ -237,6 +262,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 24),
+                  // Toggle between login and sign up
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [

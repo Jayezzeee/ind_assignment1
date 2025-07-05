@@ -1,8 +1,8 @@
+
+// HomePage displays the main diary UI, including diary entries, stats, and profile info.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-
-// import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
@@ -11,13 +11,21 @@ import '../db/sql_helper.dart';
 import '../widgets/theme_switch.dart';
 
 
+/// The main diary page, showing diary entries, stats, and user profile info.
 class HomePage extends StatefulWidget {
+  /// Whether dark mode is enabled
   final bool isDarkMode;
+  /// Callback to toggle dark mode
   final ValueChanged<bool> onThemeChanged;
+  /// The user's profile name
   final String profileName;
+  /// The user's profile description
   final String profileDescription;
+  /// Callback for profile name change (not used here)
   final ValueChanged<String> onProfileNameChanged;
+  /// Callback for profile description change (not used here)
   final ValueChanged<String> onProfileDescriptionChanged;
+  /// Creates a HomePage (main diary page).
   const HomePage({
     super.key,
     this.isDarkMode = false,
@@ -32,16 +40,21 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
+/// State for HomePage, manages diary entries, loading, and UI state.
 class _HomePageState extends State<HomePage> {
+  // List of diary entries
   List<DiaryEntry> _entries = [];
+  // Whether diary entries are loading
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    // Load diary entries on start
     _refreshDiaries();
   }
 
+  /// Loads diary entries from the local database.
   Future<void> _refreshDiaries() async {
     final data = await SQLHelper.getDiaries();
     setState(() {
@@ -50,12 +63,13 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  // Inline add form state
+  // Inline add form state (not used in main UI)
   final _addTitleController = TextEditingController();
   final _addContentController = TextEditingController();
   final _addFormKey = GlobalKey<FormState>();
   bool _adding = false;
 
+  /// Adds a diary entry using the inline form (not main UI).
   Future<void> _addDiaryInline() async {
     if (!(_addFormKey.currentState?.validate() ?? false)) return;
     setState(() => _adding = true);
@@ -71,7 +85,7 @@ class _HomePageState extends State<HomePage> {
     await _refreshDiaries();
   }
 
-  // Diary entry form dialog (bottom sheet, not full screen)
+  /// Shows the diary entry form as a modal bottom sheet.
   void showDiaryForm({
     required BuildContext context,
     DiaryEntry? existingEntry,
@@ -96,6 +110,7 @@ class _HomePageState extends State<HomePage> {
     final List<String> presetTags = ["Personal", "Work", "Travel", "Study", "Food", "Plant"];
     final tagController = TextEditingController();
 
+    // Picks an image from the camera and updates the form.
     void pickImage() async {
       final picker = ImagePicker();
       final picked = await picker.pickImage(source: ImageSource.camera, imageQuality: 70);
@@ -119,6 +134,7 @@ class _HomePageState extends State<HomePage> {
       }
     }
 
+    // Show the modal bottom sheet for the diary form
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -323,6 +339,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Deletes a diary entry by id and refreshes the list.
   void _deleteDiary(int id) async {
     await SQLHelper.deleteDiary(id);
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Successfully deleted a diary!')));
@@ -331,8 +348,10 @@ class _HomePageState extends State<HomePage> {
 
   // Removed calendar state and cleaned up calendar-related code
 
+  /// Returns the filtered list of diary entries (all for now).
   List<DiaryEntry> get _filteredEntries => _entries;
 
+  /// Builds the main diary page UI.
   @override
   Widget build(BuildContext context) {
     // Custom background color for diary page
@@ -585,6 +604,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // --- STATS SECTION HELPERS ---
+  /// Builds the stats section at the top of the diary page.
   Widget _buildStatsSection() {
     final totalDiaries = _entries.length;
     final totalWords = _entries.fold<int>(0, (sum, e) => sum + e.content.split(RegExp(r'\s+')).length + e.title.split(RegExp(r'\s+')).length);
@@ -619,6 +639,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  /// Builds a circular stat widget for the stats section.
   Widget _buildStatCircle(IconData icon, int value, String label, Color color, bool isDark) {
     final Color textColor = isDark ? Colors.white : Colors.black87;
     return Column(
@@ -650,6 +671,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   // Add this method to _HomePageState:
+  /// Gets the user's profile picture URL from Firebase Storage, if available.
   Future<String?> _getProfilePicUrl() async {
     try {
       final user = await FirebaseAuth.instance.currentUser;
