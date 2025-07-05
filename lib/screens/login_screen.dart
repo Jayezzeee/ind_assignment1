@@ -13,36 +13,74 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  Future<void> _resetPassword() async {
+    if (_emailController.text.trim().isEmpty) {
+      if (mounted) setState(() { _error = 'Please enter your email to reset password.'; });
+      return;
+    }
+    if (mounted) setState(() { _isLoading = true; _error = null; });
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: _emailController.text.trim());
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Password reset email sent!')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() { _error = e.message; });
+    } finally {
+      if (mounted) setState(() { _isLoading = false; });
+    }
+  }
+  bool _showSignUp = false;
+
+  Future<void> _signUp() async {
+    if (mounted) setState(() { _isLoading = true; _error = null; });
+    try {
+      await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: _emailController.text.trim(),
+        password: _passwordController.text.trim(),
+      );
+      if (mounted) setState(() { _showSignUp = false; });
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() { _error = e.message; });
+    } finally {
+      if (mounted) setState(() { _isLoading = false; });
+    }
+  }
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   String? _error;
   bool _isLoading = false;
 
   Future<void> _login() async {
-    setState(() { _isLoading = true; _error = null; });
+    if (mounted) setState(() { _isLoading = true; _error = null; });
     try {
       await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
     } on FirebaseAuthException catch (e) {
-      setState(() { _error = e.message; });
+      if (mounted) setState(() { _error = e.message; });
     } finally {
-      setState(() { _isLoading = false; });
+      if (mounted) setState(() { _isLoading = false; });
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDarkMode;
     return Scaffold(
       body: Container(
         width: double.infinity,
         height: double.infinity,
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFFb7baff), Color(0xFFaee2f8), Color(0xFFf8e1ff)],
+            colors: isDark
+                ? [Color(0xFF6C3EB6), Color(0xFF3A2066), Color(0xFF1A093E)]
+                : [Color(0xFFb7baff), Color(0xFFaee2f8), Color(0xFFf8e1ff)],
           ),
         ),
         child: Center(
@@ -52,13 +90,26 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Text(
+                      'Welcome to Memory Diary',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF6C3EB6),
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 32),
-                  const Text(
-                    'Login',
+                  Text(
+                    _showSignUp ? 'Sign Up' : 'Login',
                     style: TextStyle(
                       fontSize: 32,
                       fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                      color: isDark ? Colors.white : Colors.white,
                       letterSpacing: 1.2,
                     ),
                   ),
@@ -118,7 +169,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Align(
                     alignment: Alignment.centerRight,
                     child: TextButton(
-                      onPressed: () {},
+                      onPressed: _isLoading ? null : _resetPassword,
                       child: const Text(
                         'Forgot your password?',
                         style: TextStyle(color: Color(0xFF6c63ff)),
@@ -132,17 +183,17 @@ class _LoginScreenState extends State<LoginScreen> {
                           width: double.infinity,
                           height: 48,
                           child: ElevatedButton(
-                            onPressed: _login,
+                            onPressed: _showSignUp ? _signUp : _login,
                             style: ElevatedButton.styleFrom(
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(30),
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               elevation: 4,
-                              backgroundColor: const Color(0xFF6c63ff),
+                              backgroundColor: isDark ? Color(0xFF6C3EB6) : Color(0xFF6c63ff),
                             ),
-                            child: const Text(
-                              'Login',
+                            child: Text(
+                              _showSignUp ? 'Sign Up' : 'Login',
                               style: TextStyle(fontSize: 18, color: Colors.white),
                             ),
                           ),
@@ -189,12 +240,20 @@ class _LoginScreenState extends State<LoginScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Text("Don't have account? ", style: TextStyle(color: Colors.black54)),
+                      Text(
+                        _showSignUp ? 'Already have an account? ' : "Don't have account? ",
+                        style: const TextStyle(color: Colors.black54),
+                      ),
                       GestureDetector(
-                        onTap: () {},
-                        child: const Text(
-                          'Sign up',
-                          style: TextStyle(
+                        onTap: () {
+                          setState(() {
+                            _showSignUp = !_showSignUp;
+                            _error = null;
+                          });
+                        },
+                        child: Text(
+                          _showSignUp ? 'Login' : 'Sign up',
+                          style: const TextStyle(
                             color: Color(0xFF6c63ff),
                             fontWeight: FontWeight.bold,
                           ),

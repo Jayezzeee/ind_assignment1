@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 // import 'package:table_calendar/table_calendar.dart';
 import 'package:intl/intl.dart';
@@ -365,6 +367,50 @@ class _HomePageState extends State<HomePage> {
           ),
           child: Column(
             children: [
+              // Add Memory Diary title
+              const SizedBox(height: 8),
+              Text(
+                'Memory Diary',
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black,
+                ),
+              ),
+              // Small user profile section
+              FutureBuilder<String?>(
+                future: _getProfilePicUrl(),
+                builder: (context, snapshot) {
+                  final imageUrl = snapshot.data;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        CircleAvatar(
+                          radius: 20,
+                          backgroundColor: Colors.grey[300],
+                          backgroundImage: (imageUrl != null && imageUrl.isNotEmpty)
+                              ? NetworkImage(imageUrl)
+                              : null,
+                          child: (imageUrl == null || imageUrl.isEmpty)
+                              ? Icon(Icons.person, color: isDark ? Colors.white : Colors.black, size: 24)
+                              : null,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          widget.profileName.isNotEmpty ? widget.profileName : 'User',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w500,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
               // Big date and stats at the top
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 8.0),
@@ -601,5 +647,17 @@ class _HomePageState extends State<HomePage> {
         Text(label, style: TextStyle(fontSize: 12, color: textColor)),
       ],
     );
+  }
+
+  // Add this method to _HomePageState:
+  Future<String?> _getProfilePicUrl() async {
+    try {
+      final user = await FirebaseAuth.instance.currentUser;
+      if (user == null) return null;
+      final ref = FirebaseStorage.instance.ref().child('profile_pics/${user.uid}.jpg');
+      return await ref.getDownloadURL();
+    } catch (e) {
+      return null;
+    }
   }
 }

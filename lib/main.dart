@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -6,6 +5,7 @@ import 'package:firebase_database/firebase_database.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_page.dart';
 import 'screens/profile_screen.dart';
+import 'screens/settings_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,7 +81,22 @@ class _AuthGateState extends State<AuthGate> {
   int _selectedIndex = 0;
   String? _profileName;
   String? _profileDescription;
+  String? _profileAge;
+  String? _profilePreferences;
   bool _loadingProfile = false;
+  bool _editingProfile = false;
+
+  Future<void> _sendVerificationEmail() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null && !user.emailVerified) {
+      await user.sendEmailVerification();
+    }
+  }
+
+  Future<void> _reloadUser() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) await user.reload();
+  }
 
   @override
   void initState() {
@@ -97,6 +112,8 @@ class _AuthGateState extends State<AuthGate> {
       setState(() {
         _profileName = null;
         _profileDescription = null;
+        _profileAge = null;
+        _profilePreferences = null;
         _loadingProfile = false;
       });
       debugPrint('_loadProfile: user is null, resetting profile state');
@@ -105,67 +122,105 @@ class _AuthGateState extends State<AuthGate> {
     setState(() => _loadingProfile = true);
     try {
       final ref = FirebaseDatabase.instance.ref('profiles/${user.uid}');
-      debugPrint('_loadProfile: about to get snapshot with 5s timeout');
-      final snapshot = await ref.get().timeout(const Duration(seconds: 5), onTimeout: () {
+      debugPrint('_loadProfile: about to get snapshot with 2s timeout');
+      final snapshot = await ref.get().timeout(const Duration(seconds: 2), onTimeout: () {
         debugPrint('_loadProfile: ERROR - Database read timed out!');
         throw Exception('Database read timed out');
       });
-      debugPrint('_loadProfile: snapshot.exists = \${snapshot.exists}, value = \${snapshot.value}, type = \${snapshot.value?.runtimeType}');
+      debugPrint('_loadProfile: snapshot.exists = ${snapshot.exists}, value = ${snapshot.value}, type = ${snapshot.value?.runtimeType}');
       if (snapshot.exists && snapshot.value != null) {
         final raw = snapshot.value;
         String name = '';
         String desc = '';
+        String age = '';
+        String prefs = '';
         if (raw is Map) {
-          // Defensive: try both dynamic and String keys
-          name = raw['name']?.toString() ?? raw['name'.toString()]?.toString() ?? '';
-          desc = raw['description']?.toString() ?? raw['description'.toString()]?.toString() ?? '';
+          name = raw['name']?.toString() ?? '';
+          desc = raw['description']?.toString() ?? '';
+          age = raw['age']?.toString() ?? '';
+          prefs = raw['preferences']?.toString() ?? '';
         } else if (raw is String) {
           name = raw;
-        } else {
-          debugPrint('_loadProfile: Unexpected data type: \\${raw.runtimeType}');
         }
         setState(() {
           _profileName = name;
           _profileDescription = desc;
+          _profileAge = age;
+          _profilePreferences = prefs;
           _loadingProfile = false;
         });
-        debugPrint('_loadProfile: loaded name=\${_profileName}, desc=\${_profileDescription}');
       } else {
         setState(() {
           _profileName = '';
           _profileDescription = '';
+          _profileAge = '';
+          _profilePreferences = '';
           _loadingProfile = false;
         });
-        debugPrint('_loadProfile: no profile found, set empty');
       }
     } catch (e, st) {
-      debugPrint('_loadProfile: error: \${e.toString()}');
-      debugPrint('_loadProfile: stacktrace: \${st.toString()}');
+      debugPrint('_loadProfile: error: ${e.toString()}');
+      debugPrint('_loadProfile: stacktrace: ${st.toString()}');
       setState(() {
         _profileName = '';
         _profileDescription = '';
+        _profileAge = '';
+        _profilePreferences = '';
         _loadingProfile = false;
       });
     }
   }
 
-  Future<void> _saveProfile(String name, String desc) async {
+  Future<void> _saveProfile(String name, String desc, String age, String prefs) async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      debugPrint('_saveProfile: No user logged in');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Not logged in. Please log in again.')),
+        );
+      }
+      return;
+    }
+    // Prevent saving empty or incomplete profiles
+    if (name.trim().isEmpty) {
+      debugPrint('_saveProfile: Refusing to save empty name for user: \\${user.uid}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Name cannot be empty.')),
+        );
+      }
+      return;
+    }
     final ref = FirebaseDatabase.instance.ref('profiles/${user.uid}');
-    await ref.set({
-      'name': name,
-      'description': desc,
-    });
-    setState(() {
-      _profileName = name;
-      _profileDescription = desc;
-    });
-    // Ensure navigation happens after state update
-    Future.microtask(() {
-      if (mounted) setState(() => _selectedIndex = 1);
-    });
-    debugPrint('_saveProfile: saved name=\${name}, desc=\${desc}, _selectedIndex=\${_selectedIndex}');
+    debugPrint('_saveProfile: Saving for user: \\${user.uid}, name=$name, desc=$desc, age=$age, prefs=$prefs');
+    try {
+      await ref.set({
+        'name': name,
+        'description': desc,
+        'age': age,
+        'preferences': prefs,
+      });
+    } catch (e, st) {
+      debugPrint('_saveProfile: error: $e');
+      debugPrint('_saveProfile: stacktrace: $st');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to save profile: $e')),
+        );
+      }
+      return;
+    }
+    await _loadProfile();
+    if (mounted) {
+      setState(() {
+        _selectedIndex = 1;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile saved!')),
+      );
+    }
+    debugPrint('_saveProfile: saved name=$name, desc=$desc, age=$age, prefs=$prefs, _selectedIndex=$_selectedIndex');
   }
 
   void _onTabTapped(int idx) {
@@ -175,11 +230,11 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('AuthGateState build: _profileName=\${_profileName}, _loadingProfile=\${_loadingProfile}, _selectedIndex=\${_selectedIndex}');
+    debugPrint('AuthGateState build: _profileName={_profileName}, _loadingProfile={_loadingProfile}, _selectedIndex={_selectedIndex}');
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        debugPrint('StreamBuilder: connectionState=\${snapshot.connectionState}, hasData=\${snapshot.hasData}');
+        debugPrint('StreamBuilder: connectionState={snapshot.connectionState}, hasData={snapshot.hasData}');
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
@@ -200,6 +255,7 @@ class _AuthGateState extends State<AuthGate> {
             onThemeChanged: widget.onThemeChanged,
           );
         }
+        // Removed email verification check after login
         // User is logged in, load profile if not loaded
         if (_profileName == null && !_loadingProfile) {
           debugPrint('User logged in, loading profile...');
@@ -212,40 +268,131 @@ class _AuthGateState extends State<AuthGate> {
           debugPrint('Still loading profile...');
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
+
+        // Prevent navigation to diary if profile is not present or incomplete
+        bool profileComplete = _profileName != null && _profileName!.isNotEmpty && _profileAge != null && _profileAge!.isNotEmpty && _profilePreferences != null && _profilePreferences!.isNotEmpty;
+        if (_selectedIndex == 1 && !profileComplete) {
+          // Force user back to profile page
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) setState(() => _selectedIndex = 0);
+          });
+        }
+
+        // --- SWIPE FEATURE: PageView for swipe navigation ---
         return Scaffold(
           appBar: AppBar(
             title: const Text('Memory Diary'),
             actions: [
               IconButton(
-                icon: const Icon(Icons.logout),
-                tooltip: 'Logout',
-                onPressed: () async {
-                  await FirebaseAuth.instance.signOut();
+                icon: Icon(widget.isDarkMode ? Icons.dark_mode : Icons.light_mode),
+                tooltip: 'Toggle Dark Mode',
+                onPressed: () => widget.onThemeChanged(!widget.isDarkMode),
+              ),
+              if (_selectedIndex == 0 && !_editingProfile && profileComplete)
+                IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  tooltip: 'Logout',
+                  onPressed: () async {
+                    await FirebaseAuth.instance.signOut();
+                  },
+                ),
+              IconButton(
+                icon: const Icon(Icons.settings),
+                tooltip: 'Settings',
+                onPressed: () {
                   setState(() {
-                    _profileName = null;
-                    _profileDescription = null;
-                    _selectedIndex = 0;
-                    _loadingProfile = false; // Force reload after next login
+                    _editingProfile = false;
                   });
-                  debugPrint('Logout pressed, state reset');
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => SettingsScreen(
+                        displayName: _profileName ?? '',
+                        description: _profileDescription ?? '',
+                        age: _profileAge ?? '',
+                        preferences: _profilePreferences ?? '',
+                        isDarkMode: widget.isDarkMode,
+                        onThemeChanged: widget.onThemeChanged,
+                        onSave: (name, desc, age, prefs) async {
+                          await _saveProfile(name, desc, age, prefs);
+                          Navigator.of(context).pop();
+                        },
+                        onLogout: () async {
+                          await FirebaseAuth.instance.signOut();
+                          Navigator.of(context).pop();
+                        },
+                      ),
+                    ),
+                  );
                 },
               ),
             ],
           ),
-          body: IndexedStack(
-            index: _selectedIndex,
+          body: PageView(
+            controller: PageController(initialPage: _selectedIndex),
+            onPageChanged: (idx) {
+              // Prevent navigation to diary if profile is incomplete
+              if (idx == 1 && !profileComplete) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please complete and save your profile before accessing the diary.')),
+                );
+                if (mounted) setState(() => _selectedIndex = 0);
+                return;
+              }
+              setState(() => _selectedIndex = idx);
+            },
             children: [
               // Profile page (first)
-              ProfileScreen(
-                displayName: _profileName ?? '',
-                description: _profileDescription ?? '',
-                onNameChanged: (name) {},
-                onDescriptionChanged: (desc) {},
-                requireSave: _profileName == null || _profileName!.isEmpty,
-                onSave: _saveProfile,
-                onContinue: () {
-                  if (mounted) setState(() => _selectedIndex = 1);
-                },
+              Column(
+                children: [
+                  Expanded(
+                    child: ProfileScreen(
+                      displayName: _profileName ?? '',
+                      description: _profileDescription ?? '',
+                      age: _profileAge ?? '',
+                      preferences: _profilePreferences ?? '',
+                      requireSave: !profileComplete,
+                      onSave: (name, desc, age, prefs) {
+                        _saveProfile(name, desc, age, prefs);
+                      },
+                      onContinue: () async {
+                        if (profileComplete) {
+                          if (mounted) setState(() => _selectedIndex = 1);
+                        } else {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Please complete and save your profile before continuing.')),
+                          );
+                        }
+                      },
+                      isEditing: _editingProfile,
+                      onEdit: () {
+                        setState(() {
+                          _editingProfile = true;
+                        });
+                      },
+                      onCancelEdit: () {
+                        setState(() {
+                          _editingProfile = false;
+                        });
+                      },
+                    ),
+                  ),
+                  if (!_editingProfile && profileComplete)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 24.0),
+                      child: ElevatedButton.icon(
+                        onPressed: () async {
+                          await FirebaseAuth.instance.signOut();
+                        },
+                        icon: const Icon(Icons.logout),
+                        label: const Text('Logout'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.redAccent,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(160, 44),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               // Diary page (second)
               HomePage(
@@ -260,7 +407,16 @@ class _AuthGateState extends State<AuthGate> {
           ),
           bottomNavigationBar: BottomNavigationBar(
             currentIndex: _selectedIndex,
-            onTap: _onTabTapped,
+            onTap: (idx) {
+              // Prevent navigation to diary if profile is incomplete
+              if (idx == 1 && !profileComplete) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please complete and save your profile before accessing the diary.')),
+                );
+                return;
+              }
+              setState(() => _selectedIndex = idx);
+            },
             items: const [
               BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
               BottomNavigationBarItem(icon: Icon(Icons.menu_book), label: 'Diary'),

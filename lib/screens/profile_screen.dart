@@ -1,217 +1,211 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 
+// ProfileScreen displays and allows editing of the user's profile information.
+// It supports view-only and edit modes, and requires certain fields to be filled before continuing.
+import 'package:flutter/material.dart';
+
+/// The profile screen for viewing and editing user profile information.
 class ProfileScreen extends StatefulWidget {
-  final String? displayName;
-  final String? description;
-  final ValueChanged<String> onNameChanged;
-  final ValueChanged<String> onDescriptionChanged;
+  /// The user's display name (profile name)
+  final String displayName;
+  /// The user's profile description
+  final String description;
+  /// The user's age
+  final String age;
+  /// The user's preferences
+  final String preferences;
+  /// Whether the profile must be saved before continuing
   final bool requireSave;
-  final void Function(String name, String desc)? onSave;
-  final VoidCallback? onContinue;
+  /// Callback to save the profile (name, description, age, preferences)
+  final void Function(String, String, String, String) onSave;
+  /// Callback to continue to the diary page
+  final Future<void> Function() onContinue;
+  /// Whether the profile is currently in editing mode
+  final bool isEditing;
+  /// Callback to enter editing mode
+  final VoidCallback onEdit;
+  /// Callback to cancel editing mode
+  final VoidCallback onCancelEdit;
+
+  /// Creates a profile screen.
   const ProfileScreen({
     super.key,
-    this.displayName,
-    this.description,
-    required this.onNameChanged,
-    required this.onDescriptionChanged,
-    this.requireSave = false,
-    this.onSave,
-    this.onContinue,
+    required this.displayName,
+    required this.description,
+    required this.age,
+    required this.preferences,
+    required this.requireSave,
+    required this.onSave,
+    required this.onContinue,
+    required this.isEditing,
+    required this.onEdit,
+    required this.onCancelEdit,
   });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
+/// State for ProfileScreen, manages controllers and edit/view logic.
 class _ProfileScreenState extends State<ProfileScreen> {
-  File? _imageFile;
-  final _nameController = TextEditingController();
-  final _descController = TextEditingController();
-  bool _isUploading = false;
+  // Controllers for the profile fields
+  late TextEditingController _nameController;
+  late TextEditingController _descController;
+  late TextEditingController _ageController;
+  late TextEditingController _prefsController;
+  // Whether the profile is currently being edited
+  bool _editing = false;
 
   @override
   void initState() {
     super.initState();
-    _nameController.text = widget.displayName ?? '';
-    _descController.text = widget.description ?? '';
-  }
-
-  Future<void> _pickImage() async {
-    final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() {
-        _imageFile = File(picked.path);
-      });
-    }
-  }
-
-  Future<String?> _uploadImage(File file) async {
-    setState(() => _isUploading = true);
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return null;
-      final ref = FirebaseStorage.instance.ref().child('profile_pics/${user.uid}.jpg');
-      await ref.putFile(file);
-      return await ref.getDownloadURL();
-    } finally {
-      setState(() => _isUploading = false);
-    }
-  }
-
-  void _logout() async {
-    await FirebaseAuth.instance.signOut();
-    if (mounted) Navigator.of(context).pop();
+    // Initialize controllers with initial values
+    _nameController = TextEditingController(text: widget.displayName);
+    _descController = TextEditingController(text: widget.description);
+    _ageController = TextEditingController(text: widget.age);
+    _prefsController = TextEditingController(text: widget.preferences);
+    _editing = widget.requireSave || widget.isEditing;
   }
 
   @override
+  void didUpdateWidget(ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Update controllers if parent widget values change
+    if (widget.displayName != oldWidget.displayName) {
+      _nameController.text = widget.displayName;
+    }
+    if (widget.description != oldWidget.description) {
+      _descController.text = widget.description;
+    }
+    if (widget.age != oldWidget.age) {
+      _ageController.text = widget.age;
+    }
+    if (widget.preferences != oldWidget.preferences) {
+      _prefsController.text = widget.preferences;
+    }
+    _editing = widget.requireSave || widget.isEditing;
+  }
+
+  @override
+  void dispose() {
+    // Dispose controllers to free resources
+    _nameController.dispose();
+    _descController.dispose();
+    _ageController.dispose();
+    _prefsController.dispose();
+    super.dispose();
+  }
+
+  /// Called when the user taps Save. Validates and triggers onSave callback.
+  void _onSave() {
+    final name = _nameController.text.trim();
+    final desc = _descController.text.trim();
+    final age = _ageController.text.trim();
+    final prefs = _prefsController.text.trim();
+    if (name.isEmpty || age.isEmpty || prefs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all required fields.')),
+      );
+      return;
+    }
+    widget.onSave(name, desc, age, prefs);
+    setState(() => _editing = false);
+  }
+
+  /// Builds the profile screen UI.
+  @override
   Widget build(BuildContext context) {
-    final canSave = _nameController.text.trim().isNotEmpty;
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        title: const Text('Profile'),
-        backgroundColor: Colors.cyan[400],
-        elevation: 0,
-        centerTitle: true,
-        automaticallyImplyLeading: false,
-      ),
-      body: Stack(
-        children: [
-          Align(
-            alignment: Alignment.topCenter,
-            child: Container(
-              height: 180,
-              decoration: BoxDecoration(
-                color: Colors.cyan[400],
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(40),
-                  bottomRight: Radius.circular(40),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Padding(
+      padding: const EdgeInsets.all(24.0),
+      child: Center(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              // Profile heading
+              Text(
+                'Profile',
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                  color: isDark ? Colors.white : Colors.black,
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  GestureDetector(
-                    onTap: _pickImage,
-                    child: CircleAvatar(
-                      radius: 48,
-                      backgroundColor: Colors.white,
-                      backgroundImage: _imageFile != null ? FileImage(_imageFile!) : null,
-                      child: _imageFile == null
-                          ? const Icon(Icons.person, size: 48, color: Colors.cyan)
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  _isUploading ? const CircularProgressIndicator() : const SizedBox.shrink(),
-                  TextButton(
-                    onPressed: _imageFile != null ? () async {
-                      final url = await _uploadImage(_imageFile!);
-                      if (url != null) {
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Profile picture updated!')));
-                      }
-                    } : null,
-                    child: const Text('Upload Picture'),
-                  ),
-                ],
+              const SizedBox(height: 32),
+              // Name field
+              TextField(
+                controller: _nameController,
+                enabled: _editing,
+                decoration: const InputDecoration(
+                  labelText: 'Name',
+                  border: OutlineInputBorder(),
+                ),
               ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(top: 200, left: 24, right: 24),
-            child: Column(
-              children: [
-                TextField(
-                  controller: _nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Profile Name *',
-                    prefixIcon: Icon(Icons.person),
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (val) {
-                    widget.onNameChanged(val);
-                    setState(() {});
-                  },
+              const SizedBox(height: 16),
+              // Description field
+              TextField(
+                controller: _descController,
+                enabled: _editing,
+                decoration: const InputDecoration(
+                  labelText: 'Description',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: _descController,
-                  decoration: const InputDecoration(
-                    labelText: 'About Yourself',
-                    prefixIcon: Icon(Icons.info_outline),
-                    border: OutlineInputBorder(),
-                  ),
-                  maxLines: 2,
-                  onChanged: widget.onDescriptionChanged,
+                maxLines: 2,
+              ),
+              const SizedBox(height: 16),
+              // Age field
+              TextField(
+                controller: _ageController,
+                enabled: _editing,
+                decoration: const InputDecoration(
+                  labelText: 'Age',
+                  border: OutlineInputBorder(),
                 ),
-                const Spacer(),
-                if (widget.requireSave)
-                  Column(
-                    children: [
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: canSave && widget.onSave != null
-                              ? () => widget.onSave!(_nameController.text.trim(), _descController.text.trim())
-                              : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.cyan,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                          child: const Text('Save'),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      if (canSave)
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: () {
-                              if (widget.onSave != null) {
-                                widget.onSave!(_nameController.text.trim(), _descController.text.trim());
-                              }
-                              // Notify parent to switch to diary page
-                              if (widget.onContinue != null) {
-                                WidgetsBinding.instance.addPostFrameCallback((_) {
-                                  widget.onContinue!();
-                                });
-                              }
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Color(0xFF90CAF9), // Light blue
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: const Text('Continue'),
-                          ),
-                        ),
-                    ],
-                  ),
-                if (!widget.requireSave)
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _logout,
-                      icon: const Icon(Icons.logout),
-                      label: const Text('Logout'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.redAccent,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 16),
+              // Preferences field
+              TextField(
+                controller: _prefsController,
+                enabled: _editing,
+                decoration: const InputDecoration(
+                  labelText: 'Preferences',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: 32),
+              // Save/cancel or edit button
+              if (_editing)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    ElevatedButton(
+                      onPressed: _onSave,
+                      child: const Text('Save'),
                     ),
-                  ),
-                const SizedBox(height: 24),
-              ],
-            ),
+                    const SizedBox(width: 16),
+                    if (!widget.requireSave)
+                      OutlinedButton(
+                        onPressed: widget.onCancelEdit,
+                        child: const Text('Cancel'),
+                      ),
+                  ],
+                )
+              else
+                ElevatedButton(
+                  onPressed: widget.onEdit,
+                  child: const Text('Edit'),
+                ),
+              const SizedBox(height: 24),
+              // Continue to diary button
+              ElevatedButton(
+                onPressed: widget.onContinue,
+                child: const Text('Continue to Diary'),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
