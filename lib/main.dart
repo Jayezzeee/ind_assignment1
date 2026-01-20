@@ -4,16 +4,33 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:local_auth/local_auth.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_page.dart';
 import 'screens/profile_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/drawing_screen.dart';
+import 'services/notification_service.dart';
+import 'services/encryption_service.dart';
 
 
 /// App entry point. Initializes Firebase and runs the app.
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  try {
+    await Firebase.initializeApp();
+    FirebaseDatabase.instance.databaseURL = 'https://diary-be14e-default-rtdb.asia-southeast1.firebasedatabase.app';
+  } catch (e) {
+    debugPrint('Firebase init failed: $e');
+    // Continue without Firebase? But probably not.
+    rethrow;
+  }
+  try {
+    await NotificationService().init();
+  } catch (e) {
+    debugPrint('Notification init failed: $e');
+  }
   runApp(const AppRoot());
 }
 
@@ -94,6 +111,12 @@ class _AuthGateState extends State<AuthGate> {
   String? _profilePreferences;
   bool _loadingProfile = false;
   bool _editingProfile = false;
+  bool _biometricEnabled = false;
+  bool _authenticatingBiometric = false;
+  static bool _hasAuthenticated = false; // Prevent multiple auth attempts
+  bool _flashbackNotificationsEnabled = false;
+  bool _stealthModeEnabled = false;
+  final LocalAuthentication _localAuth = LocalAuthentication();
 
   /// Sends a verification email to the user (not used in current flow).
   Future<void> _sendVerificationEmail() async {
@@ -112,14 +135,100 @@ class _AuthGateState extends State<AuthGate> {
   @override
   void initState() {
     super.initState();
+    _loadBiometricSetting();
+    _loadFlashbackSetting();
+    _loadStealthSetting();
     // Only load profile after login
     debugPrint('AuthGateState initState');
   }
 
-  /// Loads the user's profile from Firebase Realtime Database and updates state.
+  /// Loads the biometric setting from SharedPreferences.
+  Future<void> _loadBiometricSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _biometricEnabled = prefs.getBool('biometric_enabled') ?? false;
+    });
+  }
+
+  /// Loads the flashback notifications setting from SharedPreferences.
+  Future<void> _loadFlashbackSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _flashbackNotificationsEnabled = prefs.getBool('flashback_notifications_enabled') ?? false;
+    });
+    // Schedule if enabled
+    if (_flashbackNotificationsEnabled) {
+      await NotificationService().scheduleDailyFlashbackReminder();
+    }
+  }
+
+  /// Loads the stealth mode setting from SharedPreferences.
+  Future<void> _loadStealthSetting() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _stealthModeEnabled = prefs.getBool('stealth_mode_enabled') ?? false;
+    });
+  }
+
+  /// Safely decrypts data, falling back to plain text if decryption fails.
+  Future<String> _safeDecrypt(String data) async {
+    try {
+      return await EncryptionService().decryptData(data);
+    } catch (e) {
+      return data; // Assume it's plain text
+    }
+  }
+
+  /// Authenticates the user using biometrics.
+  Future<void> _authenticateBiometric() async {
+    debugPrint('_authenticateBiometric called');
+    setState(() => _authenticatingBiometric = true);
+    try {
+      bool canCheck = await _localAuth.canCheckBiometrics;
+      debugPrint('canCheckBiometrics: $canCheck');
+      if (!canCheck) {
+        // If biometrics not available, skip
+        setState(() => _authenticatingBiometric = false);
+        return;
+      }
+      // Check if any biometrics are enrolled
+      final availableBiometrics = await _localAuth.getAvailableBiometrics();
+      debugPrint('availableBiometrics: $availableBiometrics');
+      if (availableBiometrics.isEmpty) {
+        // No biometrics enrolled, skip
+        setState(() => _authenticatingBiometric = false);
+        return;
+      }
+      debugPrint('calling authenticate');
+      bool authenticated = await _localAuth.authenticate(
+        localizedReason: 'Authenticate to access your Memory Diary',
+        options: const AuthenticationOptions(biometricOnly: false),
+      ).timeout(const Duration(seconds: 30), onTimeout: () {
+        debugPrint('biometric timeout');
+        // If timeout, allow access
+        return true;
+      });
+      debugPrint('authenticated: $authenticated');
+      if (!authenticated) {
+        // Instead of logout, show warning and allow access
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Biometric authentication failed. Access granted with warning.')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Biometric authentication error: $e');
+      // On error, allow access
+    } finally {
+      setState(() => _authenticatingBiometric = false);
+    }
+  }
+
+  /// Loads the user's profile from SharedPreferences.
   Future<void> _loadProfile() async {
     final user = FirebaseAuth.instance.currentUser;
-    debugPrint('_loadProfile called. user: \\${user?.uid}');
+    debugPrint('_loadProfile called. user: ${user?.uid}');
     if (user == null) {
       setState(() {
         _profileName = null;
@@ -133,43 +242,19 @@ class _AuthGateState extends State<AuthGate> {
     }
     setState(() => _loadingProfile = true);
     try {
-      final ref = FirebaseDatabase.instance.ref('profiles/${user.uid}');
-      debugPrint('_loadProfile: about to get snapshot with 2s timeout');
-      final snapshot = await ref.get().timeout(const Duration(seconds: 2), onTimeout: () {
-        debugPrint('_loadProfile: ERROR - Database read timed out!');
-        throw Exception('Database read timed out');
+      final sp = await SharedPreferences.getInstance();
+      final name = sp.getString('profile_name') ?? '';
+      final desc = sp.getString('profile_description') ?? '';
+      final age = sp.getString('profile_age') ?? '';
+      final prefsStr = sp.getString('profile_preferences') ?? '';
+      setState(() {
+        _profileName = name;
+        _profileDescription = desc;
+        _profileAge = age;
+        _profilePreferences = prefsStr;
+        _loadingProfile = false;
       });
-      debugPrint('_loadProfile: snapshot.exists = ${snapshot.exists}, value = ${snapshot.value}, type = ${snapshot.value?.runtimeType}');
-      if (snapshot.exists && snapshot.value != null) {
-        final raw = snapshot.value;
-        String name = '';
-        String desc = '';
-        String age = '';
-        String prefs = '';
-        if (raw is Map) {
-          name = raw['name']?.toString() ?? '';
-          desc = raw['description']?.toString() ?? '';
-          age = raw['age']?.toString() ?? '';
-          prefs = raw['preferences']?.toString() ?? '';
-        } else if (raw is String) {
-          name = raw;
-        }
-        setState(() {
-          _profileName = name;
-          _profileDescription = desc;
-          _profileAge = age;
-          _profilePreferences = prefs;
-          _loadingProfile = false;
-        });
-      } else {
-        setState(() {
-          _profileName = '';
-          _profileDescription = '';
-          _profileAge = '';
-          _profilePreferences = '';
-          _loadingProfile = false;
-        });
-      }
+      debugPrint('_loadProfile: loaded name=$name, desc=$desc, age=$age, prefs=$prefsStr');
     } catch (e, st) {
       debugPrint('_loadProfile: error: ${e.toString()}');
       debugPrint('_loadProfile: stacktrace: ${st.toString()}');
@@ -183,73 +268,45 @@ class _AuthGateState extends State<AuthGate> {
     }
   }
 
-  /// Saves the user's profile to Firebase Realtime Database, updates state, and shows a SnackBar on success or error.
-  Future<void> _saveProfile(String name, String desc, String age, String prefs) async {
+  /// Saves the user's profile to SharedPreferences (temporarily, until database is fixed).
+  Future<void> _saveProfile(String name, String desc, String age, String preferences) async {
     final user = FirebaseAuth.instance.currentUser;
+    debugPrint('_saveProfile called with name=$name, desc=$desc, age=$age, prefs=$preferences');
     if (user == null) {
       debugPrint('_saveProfile: No user logged in');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Not logged in. Please log in again.')),
-        );
-      }
-      return;
+      throw Exception('Not logged in. Please log in again.');
     }
     // Prevent saving empty or incomplete profiles
     if (name.trim().isEmpty) {
-      debugPrint('_saveProfile: Refusing to save empty name for user: \\${user.uid}');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Name cannot be empty.')),
-        );
-      }
-      return;
+      debugPrint('_saveProfile: Refusing to save empty name for user: ${user.uid}');
+      throw Exception('Name cannot be empty.');
     }
-    final ref = FirebaseDatabase.instance.ref('profiles/${user.uid}');
-    debugPrint('_saveProfile: Saving for user: \\${user.uid}, name=$name, desc=$desc, age=$age, prefs=$prefs');
-    try {
-      await ref.set({
-        'name': name,
-        'description': desc,
-        'age': age,
-        'preferences': prefs,
-      });
-    } catch (e, st) {
-      debugPrint('_saveProfile: error: $e');
-      debugPrint('_saveProfile: stacktrace: $st');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to save profile: $e')),
-        );
-      }
-      return;
-    }
-    await _loadProfile();
-    if (mounted) {
-      setState(() {
-        _selectedIndex = 1;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile saved!')),
-      );
-    }
-    debugPrint('_saveProfile: saved name=$name, desc=$desc, age=$age, prefs=$prefs, _selectedIndex=$_selectedIndex');
+    // Save to SharedPreferences instead of Firebase
+    final sp = await SharedPreferences.getInstance();
+    await sp.setString('profile_name', name);
+    await sp.setString('profile_description', desc);
+    await sp.setString('profile_age', age);
+    await sp.setString('profile_preferences', preferences);
+    debugPrint('_saveProfile: Saved to SharedPreferences');
+
+    setState(() {
+      _profileName = name;
+      _profileDescription = desc;
+      _profileAge = age;
+      _profilePreferences = preferences;
+      _loadingProfile = false;
+    });
+    debugPrint('_saveProfile: saved successfully');
   }
 
-  /// Handles bottom navigation bar taps, prevents navigation to diary if profile is incomplete.
-  void _onTabTapped(int idx) {
-    if (idx == 1 && (_profileName == null || _profileName!.isEmpty)) return;
-    setState(() => _selectedIndex = idx);
-  }
-
-  /// Builds the main UI, including swipe navigation (PageView), bottom navigation, and app bar actions.
+  /// Builds the main UI, including conditional navigation, bottom navigation, and app bar actions.
   @override
   Widget build(BuildContext context) {
-    debugPrint('AuthGateState build: _profileName={_profileName}, _loadingProfile={_loadingProfile}, _selectedIndex={_selectedIndex}');
+    debugPrint('AuthGate build called');
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        debugPrint('StreamBuilder: connectionState={snapshot.connectionState}, hasData={snapshot.hasData}');
+        debugPrint('StreamBuilder: connectionState=${snapshot.connectionState}, hasData=${snapshot.hasData}');
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
@@ -272,6 +329,17 @@ class _AuthGateState extends State<AuthGate> {
         }
         // Removed email verification check after login
         // User is logged in, load profile if not loaded
+        if (_biometricEnabled && !_authenticatingBiometric && !_loadingProfile && !_hasAuthenticated) {
+          debugPrint('Biometric enabled, authenticating in background...');
+          _hasAuthenticated = true; // Set flag to prevent re-auth
+          // Authenticate in background without blocking UI
+          WidgetsBinding.instance.addPostFrameCallback((_) async {
+            await Future.delayed(const Duration(milliseconds: 500)); // Small delay to ensure UI is ready
+            if (mounted) {
+              await _authenticateBiometric();
+            }
+          });
+        }
         if (_profileName == null && !_loadingProfile) {
           debugPrint('User logged in, loading profile...');
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -284,26 +352,19 @@ class _AuthGateState extends State<AuthGate> {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
-        // Prevent navigation to diary if profile is not present or incomplete
-        bool profileComplete = _profileName != null && _profileName!.isNotEmpty && _profileAge != null && _profileAge!.isNotEmpty && _profilePreferences != null && _profilePreferences!.isNotEmpty;
-        if (_selectedIndex == 1 && !profileComplete) {
-          // Force user back to profile page
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _selectedIndex = 0);
-          });
-        }
+        // Profile is now optional
+        // Removed force back to profile if incomplete
 
-        // --- SWIPE FEATURE: PageView for swipe navigation ---
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Memory Diary'),
+            title: Text(_stealthModeEnabled ? 'Secure Notes' : 'Memory Diary'),
             actions: [
               IconButton(
                 icon: Icon(widget.isDarkMode ? Icons.dark_mode : Icons.light_mode),
                 tooltip: 'Toggle Dark Mode',
                 onPressed: () => widget.onThemeChanged(!widget.isDarkMode),
               ),
-              if (_selectedIndex == 0 && !_editingProfile && profileComplete)
+              if (_selectedIndex == 0 && !_editingProfile)
                 IconButton(
                   icon: const Icon(Icons.logout, color: Colors.redAccent),
                   tooltip: 'Logout',
@@ -329,7 +390,6 @@ class _AuthGateState extends State<AuthGate> {
                         onThemeChanged: widget.onThemeChanged,
                         onSave: (name, desc, age, prefs) async {
                           await _saveProfile(name, desc, age, prefs);
-                          Navigator.of(context).pop();
                         },
                         onLogout: () async {
                           await FirebaseAuth.instance.signOut();
@@ -342,94 +402,74 @@ class _AuthGateState extends State<AuthGate> {
               ),
             ],
           ),
-          body: PageView(
-            controller: PageController(initialPage: _selectedIndex),
-            onPageChanged: (idx) {
-              // Prevent navigation to diary if profile is incomplete
-              if (idx == 1 && !profileComplete) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please complete and save your profile before accessing the diary.')),
-                );
-                if (mounted) setState(() => _selectedIndex = 0);
-                return;
-              }
-              setState(() => _selectedIndex = idx);
-            },
+          body: _selectedIndex == 0 ? Column(
             children: [
-              // Profile page (first)
-              Column(
-                children: [
-                  Expanded(
-                    child: ProfileScreen(
-                      displayName: _profileName ?? '',
-                      description: _profileDescription ?? '',
-                      age: _profileAge ?? '',
-                      preferences: _profilePreferences ?? '',
-                      requireSave: !profileComplete,
-                      onSave: (name, desc, age, prefs) {
-                        _saveProfile(name, desc, age, prefs);
-                      },
-                      onContinue: () async {
-                        if (profileComplete) {
-                          if (mounted) setState(() => _selectedIndex = 1);
-                        } else {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Please complete and save your profile before continuing.')),
-                          );
-                        }
-                      },
-                      isEditing: _editingProfile,
-                      onEdit: () {
-                        setState(() {
-                          _editingProfile = true;
-                        });
-                      },
-                      onCancelEdit: () {
-                        setState(() {
-                          _editingProfile = false;
-                        });
-                      },
+              Expanded(
+                child: ProfileScreen(
+                  key: ValueKey('profile_$_profileName$_profileDescription$_profileAge$_profilePreferences'),
+                  displayName: _profileName ?? '',
+                  description: _profileDescription ?? '',
+                  age: _profileAge ?? '',
+                  preferences: _profilePreferences ?? '',
+                  requireSave: false,
+                  onSave: (name, desc, age, prefs) async {
+                    await _saveProfile(name, desc, age, prefs);
+                  },
+                  onContinue: () async {
+                    if (mounted) setState(() => _selectedIndex = 1);
+                  },
+                  isEditing: _editingProfile,
+                  onEdit: () {
+                    setState(() {
+                      _editingProfile = true;
+                    });
+                  },
+                  onCancelEdit: () {
+                    setState(() {
+                      _editingProfile = false;
+                    });
+                  },
+                ),
+              ),
+              if (!_editingProfile)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 24.0),
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      await FirebaseAuth.instance.signOut();
+                    },
+                    icon: const Icon(Icons.logout),
+                    label: const Text('Logout'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.redAccent,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(160, 44),
                     ),
                   ),
-                  if (!_editingProfile && profileComplete)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 24.0),
-                      child: ElevatedButton.icon(
-                        onPressed: () async {
-                          await FirebaseAuth.instance.signOut();
-                        },
-                        icon: const Icon(Icons.logout),
-                        label: const Text('Logout'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.redAccent,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(160, 44),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              // Diary page (second)
-              HomePage(
-                isDarkMode: widget.isDarkMode,
-                onThemeChanged: widget.onThemeChanged,
-                profileName: _profileName ?? '',
-                profileDescription: _profileDescription ?? '',
-                onProfileNameChanged: (_) {},
-                onProfileDescriptionChanged: (_) {},
-              ),
+                ),
             ],
+          ) : HomePage(
+            key: ValueKey('home_$_profileName$_profileDescription'),
+            isDarkMode: widget.isDarkMode,
+            onThemeChanged: widget.onThemeChanged,
+            profileName: _profileName ?? '',
+            profileDescription: _profileDescription ?? '',
+            onProfileNameChanged: (_) {},
+            onProfileDescriptionChanged: (_) {},
           ),
+          floatingActionButton: _selectedIndex == 1 ? FloatingActionButton(
+            heroTag: 'fab_drawing',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const DrawingScreen()),
+              );
+            },
+            tooltip: 'Add Drawing Entry',
+            child: const Icon(Icons.brush),
+          ) : null,
           bottomNavigationBar: BottomNavigationBar(
             currentIndex: _selectedIndex,
             onTap: (idx) {
-              // Prevent navigation to diary if profile is incomplete
-              if (idx == 1 && !profileComplete) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please complete and save your profile before accessing the diary.')),
-                );
-                return;
-              }
               setState(() => _selectedIndex = idx);
             },
             items: const [
@@ -454,27 +494,35 @@ class SplashScreen extends StatefulWidget {
 
 /// State for SplashScreen, manages splash duration and transition.
 class _SplashScreenState extends State<SplashScreen> {
-  static const splashDuration = Duration(milliseconds: 700); // Shorter splash
+  static const splashDuration = Duration(milliseconds: 300); // Shorter splash
+  bool _finished = false;
+
   @override
   void initState() {
     super.initState();
-    Future.delayed(splashDuration, widget.onFinish);
+    // Finish immediately for debugging
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() => _finished = true);
+      widget.onFinish();
+    });
   }
+
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: Future.delayed(splashDuration),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return Scaffold(
-            body: Center(
-              // Fallback to a CircularProgressIndicator if the Lottie asset is missing
-              child: CircularProgressIndicator(),
-            ),
-          );
-        }
-        return widget.child;
-      },
-    );
+    if (!_finished) {
+      return const Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading Memory Diary...', style: TextStyle(fontSize: 16)),
+            ],
+          ),
+        ),
+      );
+    }
+    return widget.child;
   }
 }

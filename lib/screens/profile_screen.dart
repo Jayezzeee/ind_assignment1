@@ -16,7 +16,7 @@ class ProfileScreen extends StatefulWidget {
   /// Whether the profile must be saved before continuing
   final bool requireSave;
   /// Callback to save the profile (name, description, age, preferences)
-  final void Function(String, String, String, String) onSave;
+  final Future<void> Function(String, String, String, String) onSave;
   /// Callback to continue to the diary page
   final Future<void> Function() onContinue;
   /// Whether the profile is currently in editing mode
@@ -69,19 +69,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   void didUpdateWidget(ProfileScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Update controllers if parent widget values change
-    if (widget.displayName != oldWidget.displayName) {
-      _nameController.text = widget.displayName;
-    }
-    if (widget.description != oldWidget.description) {
-      _descController.text = widget.description;
-    }
-    if (widget.age != oldWidget.age) {
-      _ageController.text = widget.age;
-    }
-    if (widget.preferences != oldWidget.preferences) {
-      _prefsController.text = widget.preferences;
-    }
+    // Update controllers with current values
+    _nameController.text = widget.displayName;
+    _descController.text = widget.description;
+    _ageController.text = widget.age;
+    _prefsController.text = widget.preferences;
     _editing = widget.requireSave || widget.isEditing;
   }
 
@@ -96,19 +88,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   /// Called when the user taps Save. Validates and triggers onSave callback.
-  void _onSave() {
+  Future<void> _onSave() async {
+    debugPrint('_onSave called');
     final name = _nameController.text.trim();
     final desc = _descController.text.trim();
     final age = _ageController.text.trim();
     final prefs = _prefsController.text.trim();
+    debugPrint('name: $name, age: $age, prefs: $prefs');
     if (name.isEmpty || age.isEmpty || prefs.isEmpty) {
+      debugPrint('validation failed');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please fill in all required fields.')),
       );
       return;
     }
-    widget.onSave(name, desc, age, prefs);
-    setState(() => _editing = false);
+    debugPrint('calling onSave');
+    try {
+      await widget.onSave(name, desc, age, prefs);
+      debugPrint('onSave success');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile saved!')),
+      );
+      setState(() => _editing = false);
+    } catch (e) {
+      debugPrint('onSave error: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save profile: $e')),
+      );
+    }
   }
 
   /// Builds the profile screen UI.

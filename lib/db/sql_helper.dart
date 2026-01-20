@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import '../services/encryption_service.dart';
 
 class SQLHelper {
   static Database? _db;
@@ -51,7 +52,19 @@ class SQLHelper {
     } else {
       final db = await database;
       final List<Map<String, dynamic>> maps = await db.query('diaries', orderBy: "id DESC");
-      return maps.map((e) => DiaryEntry.fromMap(e)).toList();
+      final entries = <DiaryEntry>[];
+      for (final map in maps) {
+        final entry = DiaryEntry.fromMap(map);
+        if (entry.content != null) {
+          try {
+            entry.content = await EncryptionService().decryptData(entry.content!);
+          } catch (e) {
+            // Keep original content if decryption fails
+          }
+        }
+        entries.add(entry);
+      }
+      return entries;
     }
   }
 
@@ -70,7 +83,15 @@ class SQLHelper {
       return newId;
     } else {
       final db = await database;
-      return await db.insert('diaries', entry.toMap());
+      final encryptedEntry = DiaryEntry(
+        title: entry.title,
+        content: entry.content != null ? await EncryptionService().encryptData(entry.content!) : null,
+        date: entry.date,
+        mood: entry.mood,
+        tags: entry.tags,
+        imagePath: entry.imagePath,
+      );
+      return await db.insert('diaries', encryptedEntry.toMap());
     }
   }
 
@@ -84,7 +105,16 @@ class SQLHelper {
       return 0;
     } else {
       final db = await database;
-      return await db.update('diaries', entry.toMap(), where: 'id = ?', whereArgs: [entry.id]);
+      final encryptedEntry = DiaryEntry(
+        id: entry.id,
+        title: entry.title,
+        content: entry.content != null ? await EncryptionService().encryptData(entry.content!) : null,
+        date: entry.date,
+        mood: entry.mood,
+        tags: entry.tags,
+        imagePath: entry.imagePath,
+      );
+      return await db.update('diaries', encryptedEntry.toMap(), where: 'id = ?', whereArgs: [entry.id]);
     }
   }
 
@@ -94,6 +124,45 @@ class SQLHelper {
     } else {
       final db = await database;
       await db.delete('diaries', where: 'id = ?', whereArgs: [id]);
+    }
+  }
+
+  static Future<List<DiaryEntry>> getFlashbackEntries(String currentDate) async {
+    // currentDate in 'YYYY-MM-DD' format
+    final parts = currentDate.split('-');
+    if (parts.length != 3) return [];
+    final currentYear = int.parse(parts[0]);
+    final monthDay = '${parts[1]}-${parts[2]}'; // MM-DD
+
+    if (kIsWeb) {
+      return _webEntries.where((e) {
+        final eParts = e.date.split('-');
+        if (eParts.length != 3) return false;
+        final eYear = int.parse(eParts[0]);
+        final eMonthDay = '${eParts[1]}-${eParts[2]}';
+        return eMonthDay == monthDay && eYear < currentYear;
+      }).toList();
+    } else {
+      final db = await database;
+      final List<Map<String, dynamic>> maps = await db.query(
+        'diaries',
+        where: "substr(date, 6) = ? AND substr(date, 1, 4) < ?",
+        whereArgs: [monthDay, currentYear.toString()],
+        orderBy: "date DESC",
+      );
+      final entries = <DiaryEntry>[];
+      for (final map in maps) {
+        final entry = DiaryEntry.fromMap(map);
+        if (entry.content != null) {
+          try {
+            entry.content = await EncryptionService().decryptData(entry.content!);
+          } catch (e) {
+            // Keep original content if decryption fails
+          }
+        }
+        entries.add(entry);
+      }
+      return entries;
     }
   }
 }

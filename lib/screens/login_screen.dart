@@ -95,8 +95,8 @@ class _LoginScreenState extends State<LoginScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isDark
-                ? [Color(0xFF6C3EB6), Color(0xFF3A2066), Color(0xFF1A093E)]
-                : [Color(0xFFb7baff), Color(0xFFaee2f8), Color(0xFFf8e1ff)],
+                ? [const Color(0xFF6C3EB6), const Color(0xFF3A2066), const Color(0xFF1A093E)]
+                : [const Color(0xFFb7baff), const Color(0xFFaee2f8), const Color(0xFFf8e1ff)],
           ),
         ),
         child: Center(
@@ -108,11 +108,11 @@ class _LoginScreenState extends State<LoginScreen> {
                 children: [
                   // App heading
                   const SizedBox(height: 16),
-                  Center(
+                  const Center(
                     child: Text(
                       'Welcome to Memory Diary',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF6C3EB6),
@@ -213,11 +213,11 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               padding: const EdgeInsets.symmetric(vertical: 12),
                               elevation: 4,
-                              backgroundColor: isDark ? Color(0xFF6C3EB6) : Color(0xFF6c63ff),
+                              backgroundColor: isDark ? const Color(0xFF6C3EB6) : const Color(0xFF6c63ff),
                             ),
                             child: Text(
                               _showSignUp ? 'Sign Up' : 'Login',
-                              style: TextStyle(fontSize: 18, color: Colors.white),
+                              style: const TextStyle(fontSize: 18, color: Colors.white),
                             ),
                           ),
                         ),

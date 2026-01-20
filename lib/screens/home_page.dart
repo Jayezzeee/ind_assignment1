@@ -1,4 +1,3 @@
-
 // HomePage displays the main diary UI, including diary entries, stats, and profile info.
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -9,6 +8,8 @@ import 'dart:io';
 import '../models/diary_entry.dart';
 import '../db/sql_helper.dart';
 import '../widgets/theme_switch.dart';
+import 'dart:convert';
+import 'drawing_screen.dart';
 
 
 /// The main diary page, showing diary entries, stats, and user profile info.
@@ -44,6 +45,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   // List of diary entries
   List<DiaryEntry> _entries = [];
+  // List of flashback entries
+  List<DiaryEntry> _flashbackEntries = [];
   // Whether diary entries are loading
   bool _isLoading = true;
 
@@ -51,7 +54,7 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     // Load diary entries on start
-    _refreshDiaries();
+    _refreshDiaries().then((_) => _loadFlashback());
   }
 
   /// Loads diary entries from the local database.
@@ -63,26 +66,13 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  // Inline add form state (not used in main UI)
-  final _addTitleController = TextEditingController();
-  final _addContentController = TextEditingController();
-  final _addFormKey = GlobalKey<FormState>();
-  bool _adding = false;
-
-  /// Adds a diary entry using the inline form (not main UI).
-  Future<void> _addDiaryInline() async {
-    if (!(_addFormKey.currentState?.validate() ?? false)) return;
-    setState(() => _adding = true);
-    final entry = DiaryEntry(
-      title: _addTitleController.text.trim(),
-      content: _addContentController.text.trim(),
-      date: DateTime.now().toIso8601String(),
-    );
-    await SQLHelper.createDiary(entry);
-    _addTitleController.clear();
-    _addContentController.clear();
-    setState(() => _adding = false);
-    await _refreshDiaries();
+  /// Loads flashback entries for the current date.
+  Future<void> _loadFlashback() async {
+    final currentDate = DateFormat('yyyy-MM-dd').format(DateTime.now());
+    final data = await SQLHelper.getFlashbackEntries(currentDate);
+    setState(() {
+      _flashbackEntries = data;
+    });
   }
 
   /// Shows the diary entry form as a modal bottom sheet.
@@ -323,7 +313,9 @@ class _HomePageState extends State<HomePage> {
                               imagePath: imagePath,
                             );
                             await onSave(newEntry);
-                            Navigator.of(context).pop();
+                            if (mounted) {
+                              Navigator.of(context).pop();
+                            }
                           }
                         },
                         child: const Text('Save'),
@@ -356,9 +348,6 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     // Custom background color for diary page
     final bool isDark = widget.isDarkMode;
-    final Color diaryBgColor = isDark
-        ? const Color(0xFF2D1457) // deep purple for dark mode
-        : const Color(0xFFE3F0FF); // light blue for light mode
 
     return Scaffold(
       appBar: AppBar(
@@ -373,12 +362,12 @@ class _HomePageState extends State<HomePage> {
         child: Container(
           decoration: BoxDecoration(
             gradient: isDark
-                ? LinearGradient(
+                ? const LinearGradient(
                     colors: [Color(0xFF2D1457), Color(0xFF1A093E)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   )
-                : LinearGradient(
+                : const LinearGradient(
                     colors: [Color(0xFFE3F0FF), Color(0xFFB3D8FF)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
@@ -448,6 +437,8 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
+              // Flashback memory reminder
+              if (_flashbackEntries.isNotEmpty) _buildFlashbackCard(),
               // Diary entries list
               Expanded(
                 child: RefreshIndicator(
@@ -471,6 +462,30 @@ class _HomePageState extends State<HomePage> {
                               itemBuilder: (ctx, i) {
                                 final entry = _filteredEntries[i];
                                 final entryDate = DateTime.tryParse(entry.date);
+                                final isDrawing = entry.content?.startsWith('Drawing:') ?? false;
+                                List<DrawingPath> drawingPaths = [];
+                                if (isDrawing) {
+                                  try {
+                                    final jsonStr = entry.content!.substring(8);
+                                    final data = jsonDecode(jsonStr) as List;
+                                    drawingPaths = data.map((item) {
+                                      if (item is Map) {
+                                        // New format
+                                        final points = (item['points'] as List).map((p) => Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble())).toList();
+                                        final color = Color(item['color'] as int);
+                                        return DrawingPath(points: points, color: color);
+                                      } else if (item is List) {
+                                        // Old format
+                                        final points = (item).map((p) => Offset((p['dx'] as num).toDouble(), (p['dy'] as num).toDouble())).toList();
+                                        return DrawingPath(points: points, color: Colors.black);
+                                      } else {
+                                        throw Exception('Invalid drawing data');
+                                      }
+                                    }).toList();
+                                  } catch (e) {
+                                    // Ignore invalid data
+                                  }
+                                }
                                 final moodEmoji = {
                                   "happy": "😄",
                                   "meh": "🙂",
@@ -486,16 +501,24 @@ class _HomePageState extends State<HomePage> {
                                     color: isDark ? Colors.white.withOpacity(0.08) : Colors.white.withOpacity(0.92),
                                     child: InkWell(
                                       borderRadius: BorderRadius.circular(18),
-                                      onTap: () => showDiaryForm(
-                                        context: context,
-                                        existingEntry: entry,
-                                        onSave: (updated) async {
-                                          if (updated.id != null) {
-                                            await SQLHelper.updateDiary(updated);
-                                          }
-                                          await _refreshDiaries();
-                                        },
-                                      ),
+                                      onTap: () {
+                                        if (isDrawing) {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(builder: (context) => DrawingScreen(existingEntry: entry)),
+                                          ).then((_) => _refreshDiaries());
+                                        } else {
+                                          showDiaryForm(
+                                            context: context,
+                                            existingEntry: entry,
+                                            onSave: (updated) async {
+                                              if (updated.id != null) {
+                                                await SQLHelper.updateDiary(updated);
+                                              }
+                                              await _refreshDiaries();
+                                            },
+                                          );
+                                        }
+                                      },
                                       child: Padding(
                                         padding: const EdgeInsets.all(18.0),
                                         child: Column(
@@ -508,7 +531,7 @@ class _HomePageState extends State<HomePage> {
                                                 Column(
                                                   children: [
                                                     Text(
-                                                      entryDate != null ? '${entryDate.day.toString().padLeft(2, '0')}' : '',
+                                                      entryDate != null ? entryDate.day.toString().padLeft(2, '0') : '',
                                                       style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: isDark ? Colors.cyanAccent : Colors.indigo),
                                                     ),
                                                     Text(
@@ -529,26 +552,40 @@ class _HomePageState extends State<HomePage> {
                                                     crossAxisAlignment: CrossAxisAlignment.start,
                                                     children: [
                                                       Text(
-                                                        entry.title,
+                                                        entry.title ?? 'Untitled',
                                                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: isDark ? Colors.white : Colors.black),
                                                       ),
                                                       const SizedBox(height: 4),
                                                       Text(
-                                                        entry.content,
+                                                        isDrawing ? 'Drawing Entry' : entry.content ?? '',
                                                         style: TextStyle(fontSize: 15, color: isDark ? Colors.white70 : Colors.black87),
                                                         maxLines: 3,
                                                         overflow: TextOverflow.ellipsis,
                                                       ),
-                                                      if (entry.tags.isNotEmpty)
+                                                      if (isDrawing && drawingPaths.isNotEmpty)
+                                                        Padding(
+                                                          padding: const EdgeInsets.only(top: 8.0),
+                                                          child: Container(
+                                                            height: 80,
+                                                            width: double.infinity,
+                                                            decoration: BoxDecoration(
+                                                              border: Border.all(color: Colors.grey),
+                                                              borderRadius: BorderRadius.circular(8),
+                                                              color: Colors.white,
+                                                            ),
+                                                            child: CustomPaint(
+                                                              painter: DrawingPainter(drawingPaths, null),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      if (entry.tags != null && entry.tags!.isNotEmpty)
                                                         Padding(
                                                           padding: const EdgeInsets.only(top: 6.0),
                                                           child: Wrap(
                                                             spacing: 6,
-                                                            children: entry.tags.map((tag) => Chip(
-                                                              label: Text(tag),
-                                                              backgroundColor: isDark ? Colors.deepPurple[700] : Colors.indigo[50],
-                                                              labelStyle: TextStyle(fontSize: 12, color: isDark ? Colors.cyanAccent : Colors.indigo),
-                                                            )).toList(),
+                                                            children: entry.tags!.map((tag) => Chip(
+                                                                 label: Text(tag),
+                                                               )).toList(),
                                                           ),
                                                         ),
                                                       if (entry.imagePath != null && entry.imagePath!.isNotEmpty)
@@ -595,9 +632,9 @@ class _HomePageState extends State<HomePage> {
             await _refreshDiaries();
           },
         ),
-        child: const Icon(Icons.add),
         backgroundColor: Colors.indigo,
         shape: const CircleBorder(),
+        child: const Icon(Icons.add),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
     );
@@ -607,7 +644,11 @@ class _HomePageState extends State<HomePage> {
   /// Builds the stats section at the top of the diary page.
   Widget _buildStatsSection() {
     final totalDiaries = _entries.length;
-    final totalWords = _entries.fold<int>(0, (sum, e) => sum + e.content.split(RegExp(r'\s+')).length + e.title.split(RegExp(r'\s+')).length);
+    final totalWords = _entries.fold<int>(0, (sum, e) {
+      final contentWords = (e.content ?? '').split(RegExp(r'\s+')).where((s) => s.isNotEmpty).length;
+      final titleWords = (e.title ?? '').split(RegExp(r'\s+')).where((s) => s.isNotEmpty).length;
+      return sum + contentWords + titleWords;
+    });
     final positive = _entries.where((e) => e.mood == 'happy' || e.mood == 'rad').length;
     final negative = _entries.where((e) => e.mood == 'sad' || e.mood == 'angry').length;
     final bool isDark = widget.isDarkMode;
@@ -671,10 +712,43 @@ class _HomePageState extends State<HomePage> {
   }
 
   // Add this method to _HomePageState:
+  /// Builds the flashback memory reminder card.
+  Widget _buildFlashbackCard() {
+    final randomEntry = (_flashbackEntries..shuffle()).first;
+    final entryDate = DateTime.tryParse(randomEntry.date);
+    final yearsAgo = DateTime.now().year - (entryDate?.year ?? DateTime.now().year);
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'On this day $yearsAgo year${yearsAgo != 1 ? 's' : ''} ago...',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              randomEntry.title ?? 'Untitled',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              randomEntry.content ?? '',
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Gets the user's profile picture URL from Firebase Storage, if available.
   Future<String?> _getProfilePicUrl() async {
     try {
-      final user = await FirebaseAuth.instance.currentUser;
+      final user = FirebaseAuth.instance.currentUser;
       if (user == null) return null;
       final ref = FirebaseStorage.instance.ref().child('profile_pics/${user.uid}.jpg');
       return await ref.getDownloadURL();
@@ -682,4 +756,87 @@ class _HomePageState extends State<HomePage> {
       return null;
     }
   }
+}
+
+/// Custom painter for drawing the paths.
+class DrawingPainter extends CustomPainter {
+  final List<DrawingPath> completedPaths;
+  final DrawingPath? currentPath;
+
+  DrawingPainter(this.completedPaths, this.currentPath);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (completedPaths.isEmpty && currentPath == null) return;
+
+    // Find bounds
+    double minX = double.infinity, minY = double.infinity, maxX = double.negativeInfinity, maxY = double.negativeInfinity;
+    for (final path in completedPaths) {
+      for (final offset in path.points) {
+        minX = minX < offset.dx ? minX : offset.dx;
+        minY = minY < offset.dy ? minY : offset.dy;
+        maxX = maxX > offset.dx ? maxX : offset.dx;
+        maxY = maxY > offset.dy ? maxY : offset.dy;
+      }
+    }
+    if (currentPath != null) {
+      for (final offset in currentPath!.points) {
+        minX = minX < offset.dx ? minX : offset.dx;
+        minY = minY < offset.dy ? minY : offset.dy;
+        maxX = maxX > offset.dx ? maxX : offset.dx;
+        maxY = maxY > offset.dy ? maxY : offset.dy;
+      }
+    }
+
+    final drawingWidth = maxX - minX;
+    final drawingHeight = maxY - minY;
+    if (drawingWidth <= 0 || drawingHeight <= 0) return;
+
+    final scaleX = size.width / drawingWidth;
+    final scaleY = size.height / drawingHeight;
+    final scale = scaleX < scaleY ? scaleX : scaleY;
+
+    canvas.save();
+    canvas.translate(-minX * scale, -minY * scale);
+    canvas.scale(scale);
+
+    for (final path in completedPaths) {
+      if (path.points.length > 1) {
+        final isEraser = path.color.value == 0xFFF5F5F5 || path.color.value == 0xFF212121;
+        final strokeWidth = isEraser ? 6.0 / scale : 3.0 / scale;
+        final paint = Paint()
+          ..color = path.color
+          ..strokeWidth = strokeWidth
+          ..strokeCap = StrokeCap.round
+          ..style = PaintingStyle.stroke;
+        final Path drawPath = Path();
+        drawPath.moveTo(path.points[0].dx, path.points[0].dy);
+        for (int i = 1; i < path.points.length; i++) {
+          drawPath.lineTo(path.points[i].dx, path.points[i].dy);
+        }
+        canvas.drawPath(drawPath, paint);
+      }
+    }
+
+    if (currentPath != null && currentPath!.points.length > 1) {
+      final isEraser = currentPath!.color.value == 0xFFF5F5F5 || currentPath!.color.value == 0xFF212121;
+      final strokeWidth = isEraser ? 6.0 / scale : 3.0 / scale;
+      final paint = Paint()
+        ..color = currentPath!.color
+        ..strokeWidth = strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..style = PaintingStyle.stroke;
+      final Path drawPath = Path();
+      drawPath.moveTo(currentPath!.points[0].dx, currentPath!.points[0].dy);
+      for (int i = 1; i < currentPath!.points.length; i++) {
+        drawPath.lineTo(currentPath!.points[i].dx, currentPath!.points[i].dy);
+      }
+      canvas.drawPath(drawPath, paint);
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

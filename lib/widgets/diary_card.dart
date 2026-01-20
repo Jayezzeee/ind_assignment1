@@ -1,6 +1,6 @@
-
 // DiaryCard displays a single diary entry with edit and delete actions.
 import 'package:flutter/material.dart';
+import 'dart:io';
 import '../models/diary_entry.dart';
 
 /// A card widget for displaying a diary entry with edit and delete buttons.
@@ -23,13 +23,23 @@ class DiaryCard extends StatelessWidget {
       elevation: 4,
       child: ListTile(
         // Leading avatar (static image for now)
-        leading: const CircleAvatar(
-          backgroundImage: AssetImage('assets/images/happy.gif'),
-        ),
+        leading: entry.imagePath != null && entry.imagePath!.isNotEmpty
+            ? ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Image.file(
+                  File(entry.imagePath!),
+                  width: 48,
+                  height: 48,
+                  fit: BoxFit.cover,
+                ),
+              )
+            : const CircleAvatar(
+                backgroundImage: AssetImage('assets/images/happy.gif'),
+              ),
         // Entry title
-        title: Text(entry.title),
+        title: Text(entry.title ?? 'Untitled'),
         // Entry content and date
-        subtitle: Text('${entry.content}\n${entry.date}'),
+        subtitle: Text('${entry.content ?? ''}\n${entry.date}'),
         isThreeLine: true,
         // Edit and delete buttons
         trailing: Row(
